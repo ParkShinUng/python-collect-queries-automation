@@ -14,8 +14,6 @@ from playwright.async_api import async_playwright, Page
 async def main():
     cfg = Config()
     
-    login_success = False
-
     # ----- 엑셀 로드 및 작업 읽기 -----
     excel_mgr = ExcelManager(cfg)
     
@@ -28,7 +26,20 @@ async def main():
             browser = await p.chromium.launch_persistent_context(
                 cfg.user_data_dir,
                 headless=cfg.headless,
-                args=["--disable-blink-features=AutomationControlled"],
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                    "--disable-infobars",
+                    "--disable-dev-shm-usage",
+                    "--start-maximized",
+                ],
+                user_agent=(
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/140.0.0.0 Safari/537.36"
+                ),
+                locale="ko-KR",
+                timezone_id="Asia/Seoul",
             )
 
             # 첫 페이지 준비
@@ -36,18 +47,15 @@ async def main():
             await page0.goto(cfg.chatgpt_url, wait_until="load")
             
             # 로그인 처리(첫 1회만)
-            if login_success == False:
+            if await page0.locator('button[data-testid="login-button"]').count() > 0 == False:
                 await chatgpt_login(page0, cfg.USER_ID, cfg.USER_PW)
-                login_success = True
-                
-            # 로그인 후 다시 메인 페이지
-            await page0.goto(cfg.chatgpt_url, wait_until="load")
+                await page0.goto(cfg.chatgpt_url, wait_until="load")
 
             # 나머지 탭 생성
             pages: List[Page] = [page0]
             for _ in range(cfg.num_tabs - 1):
                 new_page = await browser.new_page()
-                await new_page.goto(cfg.chatgpt_url, wait_until="load")
+                await new_page.goto(cfg.chatgpt_url, wait_until="commit")
                 pages.append(new_page)
 
             # ----- 작업 분배 (라운드 로빈) -----

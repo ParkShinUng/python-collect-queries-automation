@@ -1,9 +1,11 @@
 import re
+import time
 import asyncio
 
 from helper import log
 from config import Config
 from playwright.async_api import Page
+from jsonpath_ng import jsonpath, parse
 from typing import List, Tuple, Optional, Dict, Any
 
 
@@ -14,6 +16,7 @@ class ChatGPTSession:
         self.page = page
         self.cfg = cfg
         self.worker_id = worker_id
+        self.session_code = None
 
     # ---------- 공통 동작 ----------
     async def go_to_main_url(self) -> None:
@@ -23,16 +26,15 @@ class ChatGPTSession:
     async def _wait_for_session_code_and_queries(
         self,
         total_timeout: float,
-    ) -> Tuple[Optional[str], Optional[List[Any]]]:
+    ) -> Optional[str]:
         """
         returns:
-          (session_code, queries_list)
+          queries: Optional[str])
         """
-        session_code: Optional[str] = None
-        queries_data: Optional[List[Any]] = None
+        queries_data: Optional[str] = None
 
         async def on_response(response):
-            nonlocal session_code, queries_data
+            nonlocal queries_data
 
             if queries_data is not None:
                 return
@@ -40,33 +42,23 @@ class ChatGPTSession:
             url = response.url
 
             # chatgpt / openai 관련 응답만
-            if "chatgpt.com" not in url and "openai.com" not in url:
+            target_url = self.cfg.check_json_url + self.session_code
+            if target_url != url:
                 return
 
             content_type = response.headers.get("content-type", "")
             if "application/json" not in content_type:
                 return
 
-            try:
-                data = await response.json()
-            except Exception:
-                return
-
+            data = await response.json()
             if not isinstance(data, dict):
                 return
 
-            # 1) location_href → session_code
-            if session_code is None and "location_href" in data:
-                session_url = str(data["location_href"])
-                sc = self.extract_session_code_from_url(session_url)
-                if sc:
-                    session_code = sc
-                    log(f"[Worker {self.worker_id}] session_detect: {session_url} → {session_code}")
+            jsonpath_expr = parse("$..queries")
+            find_data_list = jsonpath_expr.find(data)
 
-            # 2) queries 처리
-            if "queries" in data:
-                if session_code is not None and session_code in url:
-                    queries_data = data["queries"]
+            new_queries_data_list = [query_str for find_data in find_data_list for query_str in find_data.value]
+            queries_data = ', '.join(new_queries_data_list)
 
         self.page.on("response", on_response)
 
@@ -79,90 +71,40 @@ class ChatGPTSession:
                 await asyncio.sleep(interval)
                 waited += interval
         finally:
-            self.page.off("response", on_response)
+            self.page.remove_listener('response', on_response)
 
-        return session_code, queries_data
-
-    async def _wait_for_queries_with_known_session(
-        self,
-        session_code: Optional[str],
-        total_timeout: float,
-    ) -> Optional[List[Any]]:
-        """
-        이미 session_code를 알고 있을 때,
-        해당 코드가 URL에 포함된 'queries' 응답만 기다려서 반환.
-        """
-        holder: Dict[str, Optional[List[Any]]] = {"data": None}
-
-        async def on_response(response):
-            if holder["data"] is not None:
-                return
-
-            url = response.url
-
-            if session_code and session_code not in url:
-                return
-
-            if "chatgpt.com" not in url and "openai.com" not in url:
-                return
-
-            content_type = response.headers.get("content-type", "")
-            if "application/json" not in content_type:
-                return
-
-            try:
-                data = await response.json()
-            except Exception:
-                return
-
-            if isinstance(data, dict) and "queries" in data:
-                holder["data"] = data["queries"]
-
-        self.page.on("response", on_response)
-
-        waited = 0.0
-        interval = 0.5
-        try:
-            while waited < total_timeout:
-                if holder["data"] is not None:
-                    break
-                await asyncio.sleep(interval)
-                waited += interval
-        finally:
-            self.page.off("response", on_response)
-
-        return holder["data"]
+        return queries_data
 
     # ---------- 프롬프트 전송 & queries 수집 ----------
     async def send_prompt_and_get_session_and_queries(self, prompt: str) -> Tuple[Optional[str], Optional[List[Any]]]:
-        await self.page.locator("textarea[data-qa='prompt-textarea']").wait_for(state="visible", timeout=15000)
-        await self.page.locator("textarea[data-qa='prompt-textarea']").fill(prompt)
+        prompt_textarea = await self.page.wait_for_selector("div[id='prompt-textarea']")
+        await prompt_textarea.fill(prompt)
+        
+        await prompt_textarea.press("Enter")
+        await self.page.wait_for_url("**/c/*", timeout=5000)
+
+        self.session_code = self.extract_session_code_from_url(await self.page.evaluate("location.href"))
 
         # 응답 감지 태스크 먼저 생성 후 클릭
         session_queries_task = asyncio.create_task(
             self._wait_for_session_code_and_queries(self.cfg.queries_wait_timeout)
         )
 
-        await self.page.locator("button[data-testid='send-button']").click()
-        await self.page.wait_for_timeout(self.cfg.min_answer_wait * 1000)
-
-        session_code, queries = await session_queries_task
-        log(f"[Worker {self.worker_id}] send_prompt: session_code={session_code}, "
+        queries = await session_queries_task
+        log(f"[Worker {self.worker_id}] send_prompt: session_code={self.session_code}, "
             f"queries_found={queries is not None}")
-        return session_code, queries
+        return queries
 
-    async def reload_and_get_queries(self, session_code: Optional[str]) -> Optional[List[Any]]:
-        log(f"[Worker {self.worker_id}] reload: session_code={session_code}")
+    async def reload_and_get_queries(self) -> Optional[List[Any]]:
+        log(f"[Worker {self.worker_id}] reload: session_code={self.session_code}")
         task = asyncio.create_task(
-            self._wait_for_queries_with_known_session(
-                session_code,
-                self.cfg.reload_wait_timeout,
-            )
+            self._wait_for_session_code_and_queries(self.cfg.reload_wait_timeout)
         )
 
         await self.page.reload(wait_until="load")
         return await task
-
+    
+    @staticmethod
     def extract_session_code_from_url(url: str) -> Optional[str]:
         m = re.search(r"/c/([0-9a-fA-F\-]+)", url)
         if m:
