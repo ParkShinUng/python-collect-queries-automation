@@ -25,30 +25,24 @@ async def worker_job(
         try:
             queries = await session.send_prompt_and_get_session_and_queries(prompt_text)
         except Exception as e:
-            log(f"[Worker {session.worker_id}] Row: {row}, Prompt: {prompt_text} 1차 수집 중 예외: {e}")
+            log(f"[Worker {session.worker_id}] Row: {row}, Prompt: {prompt_text}, 1차 수집 중 예외: {e}")
 
         # 2차: queries 없으면, session_code 기준으로 새로고침 재시도
         attempt = 0
         while (not queries) and attempt < session.cfg.max_reload_try:
             attempt += 1
-            log(f"[Worker {session.worker_id}] Row: {row}, Prompt: {prompt_text} queries 없음 → "
+            log(f"[Worker {session.worker_id}] Row: {row}, Prompt: {prompt_text}, queries 없음 → "
                 f"새로고침 재시도 {attempt}/{session.cfg.max_reload_try}")
             try:
                 queries = await session.reload_and_get_queries()
             except Exception as e:
-                log(f"[Worker {session.worker_id}] Row {row} 새로고침 중 예외: {e}")
+                log(f"[Worker {session.worker_id}] Row: {row}, Prompt: {prompt_text}, 새로고침 중 예외: {e}")
 
         if not queries:
             queries = "X"
-        log(f"[Worker {session.worker_id}] Row {row} 결과: {queries}")
+        log(f"[Worker {session.worker_id}] Row: {row}, Prompt: {prompt_text}, 결과: {queries}")
 
         results.append((row, queries))
-
-        # 다음 질문 전환 전에 새 채팅
-        try:
-            await session.go_to_new_chat()
-        except Exception as e:
-            log(f"[Worker {session.worker_id}] Row {row} 새 채팅 전환 중 예외: {e}")
 
         await asyncio.sleep(session.cfg.between_prompts_sleep)
 
