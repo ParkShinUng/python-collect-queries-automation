@@ -2,11 +2,13 @@ import re
 import time
 import asyncio
 
+from operator import eq
 from helper import log
 from config import Config
+from urllib.parse import urljoin
 from playwright.async_api import Page
-from jsonpath_ng import jsonpath, parse
-from typing import List, Tuple, Optional, Dict, Any
+from jsonpath_ng import parse
+from typing import List, Tuple, Optional, Any
 
 
 class ChatGPTSession:
@@ -19,8 +21,6 @@ class ChatGPTSession:
         self.session_code = None
 
     # ---------- 공통 동작 ----------
-    async def go_to_main_url(self) -> None:
-        await self.page.goto(self.cfg.chatgpt_url, wait_until="load")
 
     # ---------- 네트워크 응답 핸들러 ----------
     async def _wait_for_session_code_and_queries(
@@ -38,12 +38,13 @@ class ChatGPTSession:
 
             if queries_data is not None:
                 return
-
-            url = response.url
-
+            
+            if (self.session_code is None) or (self.session_code not in response.url):
+                return
+            
             # chatgpt / openai 관련 응답만
-            target_url = self.cfg.check_json_url + self.session_code
-            if target_url != url:
+            target_url = urljoin(self.cfg.check_json_url, self.session_code)
+            if target_url != response.url:
                 return
 
             content_type = response.headers.get("content-type", "")
@@ -51,8 +52,8 @@ class ChatGPTSession:
                 return
 
             data = await response.json()
-            if not isinstance(data, dict):
-                return
+            
+            print(f"session code : {self.session_code}, url : {response.url}")
 
             jsonpath_expr = parse("$..queries")
             find_data_list = jsonpath_expr.find(data)
@@ -61,9 +62,10 @@ class ChatGPTSession:
             queries_data = ', '.join(new_queries_data_list)
 
         self.page.on("response", on_response)
+        await self.page.reload(wait_until="load")
 
         waited = 0.0
-        interval = 0.5
+        interval = 0.1
         try:
             while waited < total_timeout:
                 if queries_data is not None:
@@ -76,12 +78,11 @@ class ChatGPTSession:
         return queries_data
 
     # ---------- 프롬프트 전송 & queries 수집 ----------
-    async def send_prompt_and_get_session_and_queries(self, prompt: str) -> Tuple[Optional[str], Optional[List[Any]]]:
+    async def send_prompt_and_get_session_and_queries(self, prompt: str) -> Tuple[Optional[str], Optional[List[Any]]]:        
         prompt_textarea = await self.page.wait_for_selector("div[id='prompt-textarea']")
         await prompt_textarea.fill(prompt)
-        
         await prompt_textarea.press("Enter")
-        await self.page.wait_for_url("**/c/*", timeout=5000)
+        await self.page.wait_for_url("**/c/*", timeout=self.cfg.min_answer_wait * 1000)
 
         self.session_code = self.extract_session_code_from_url(await self.page.evaluate("location.href"))
 
@@ -91,8 +92,12 @@ class ChatGPTSession:
         )
 
         queries = await session_queries_task
-        log(f"[Worker {self.worker_id}] send_prompt: session_code={self.session_code}, "
+        log(f"[Worker {self.worker_id}] send_prompt={prompt} session_code={self.session_code}, "
             f"queries_found={queries is not None}")
+        
+        await self.delete_chat()
+        await self.page.goto(self.cfg.chatgpt_url, wait_until="load")
+        
         return queries
 
     async def reload_and_get_queries(self) -> Optional[List[Any]]:
@@ -100,9 +105,14 @@ class ChatGPTSession:
         task = asyncio.create_task(
             self._wait_for_session_code_and_queries(self.cfg.reload_wait_timeout)
         )
-
         await self.page.reload(wait_until="load")
         return await task
+    
+    async def delete_chat(self) -> None:
+        combo = "Control+Shift+Backspace" if self.cfg.platform_info == "Windows" else "Meta+Shift+Backspace"
+        await self.page.keyboard.press(combo)
+        await self.page.locator('button[data-testid="delete-conversation-confirm-button"]').click()
+        await asyncio.sleep(self.cfg.between_prompts_sleep)
     
     @staticmethod
     def extract_session_code_from_url(url: str) -> Optional[str]:
@@ -111,12 +121,3 @@ class ChatGPTSession:
             return m.group(1)
         return None
     
-
-async def chatgpt_login(page: Page, user_id: str, user_pw: str) -> None:
-    """ChatGPT 로그인 처리."""
-    await page.locator('button[data-testid="login-button"]').click()
-    await page.locator('input[id="email"]').fill(user_id)
-    await page.locator('button[type="submit"]').click()
-
-    await page.locator('input[name="current-password"]').fill(user_pw)
-    await page.locator('button[type="submit"]').click()
