@@ -16,6 +16,7 @@ class Config:
     prompt_col: str = "B"
     start_col_row: int = 1
     start_row: int = 2
+    result_check_start_col = 2  # B열부터 결과 체크
 
     # ChatGPT
     __user_id = "tlsdnd001@gmail.com"
