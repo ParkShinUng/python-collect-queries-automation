@@ -38,12 +38,12 @@ class ExcelManager:
         def is_empty(value):
             return value is None or (isinstance(value, str) and value.strip() == "") or value == datetime.now().strftime("%Y/%m/%d")
         
-        ws_result_col = 1
+        ws_result_col = self.cfg.result_check_start_col
         while not is_empty(self.ws.cell(row=self.cfg.start_col_row, column=ws_result_col).value):
             ws_result_col += 1
                 
         for row, formatted in results:
-            self.ws[f"{ws_result_col}{row}"] = formatted
+            self.ws.cell(row=row, column=ws_result_col).value = formatted
             
     def save(self) -> None:
         assert self.wb is not None
