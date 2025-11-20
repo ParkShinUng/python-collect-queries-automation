@@ -1,6 +1,0 @@
-2025/11/19-16:13:21.064 4ff4 Reusing MANIFEST c:\workspace\Python\python-collect-gpt-queries\user_data_chatgpt\Default\Local Storage\leveldb/MANIFEST-000001
-2025/11/19-16:13:21.074 4ff4 Recovering log #7
-2025/11/19-16:13:21.081 4ff4 Reusing old log c:\workspace\Python\python-collect-gpt-queries\user_data_chatgpt\Default\Local Storage\leveldb/000007.log 
-2025/11/19-16:14:06.789 5fa8 Level-0 table #11: started
-2025/11/19-16:14:06.796 5fa8 Level-0 table #11: 39170 bytes OK
-2025/11/19-16:14:06.799 5fa8 Delete type=0 #7
