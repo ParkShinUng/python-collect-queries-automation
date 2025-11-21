@@ -53,8 +53,6 @@ class ChatGPTSession:
 
             data = await response.json()
             
-            print(f"session code : {self.session_code}, url : {response.url}")
-
             jsonpath_expr = parse("$..queries")
             find_data_list = jsonpath_expr.find(data)
             
@@ -76,6 +74,7 @@ class ChatGPTSession:
                 waited += interval
         finally:
             self.page.remove_listener('response', on_response)
+            print(f"{self.prompt} : {queries_data}")
 
         return queries_data
 
