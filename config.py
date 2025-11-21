@@ -27,7 +27,7 @@ class Config:
     headless: bool = False
     
     # 병렬 처리
-    num_tabs: int = 1
+    num_tabs: int = 3
 
     # 타임아웃 및 딜레이
     queries_wait_timeout: float = 10.0

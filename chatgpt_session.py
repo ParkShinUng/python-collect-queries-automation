@@ -57,12 +57,14 @@ class ChatGPTSession:
 
             jsonpath_expr = parse("$..queries")
             find_data_list = jsonpath_expr.find(data)
+            
+            if not find_data_list:
+                return
 
             new_queries_data_list = [query_str for find_data in find_data_list for query_str in find_data.value]
             queries_data = ', '.join(new_queries_data_list)
 
         self.page.on("response", on_response)
-        await self.page.reload(wait_until="load")
 
         waited = 0.0
         interval = 0.1
@@ -95,8 +97,8 @@ class ChatGPTSession:
         log(f"[Worker {self.worker_id}] send_prompt={prompt} session_code={self.session_code}, "
             f"queries_found={queries is not None}")
         
+        await asyncio.sleep(self.cfg.min_answer_wait)
         await self.delete_chat()
-        await self.page.goto(self.cfg.chatgpt_url, wait_until="load")
         
         return queries
 
@@ -109,8 +111,8 @@ class ChatGPTSession:
         return await task
     
     async def delete_chat(self) -> None:
-        combo = "Control+Shift+Backspace" if self.cfg.platform_info == "Windows" else "Meta+Shift+Backspace"
-        await self.page.keyboard.press(combo)
+        await self.page.locator('button[data-testid="conversation-options-button"]').click()
+        await self.page.locator('text=삭제').click()
         await self.page.locator('button[data-testid="delete-conversation-confirm-button"]').click()
         await asyncio.sleep(self.cfg.between_prompts_sleep)
     
